@@ -1,0 +1,18 @@
+# Python / Virtual Environment
+venv/
+__pycache__/
+*.pyc
+env/
+.env
+
+# Database
+*.sqlite3
+
+# Media & Static
+media/
+static_cdn/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
