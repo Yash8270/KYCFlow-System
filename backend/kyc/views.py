@@ -186,7 +186,9 @@ class ReviewerQueueView(APIView):
 
     def get(self, request):
         sla_threshold = timezone.now() - timedelta(hours=24)
-        submissions = KYCSubmission.objects.select_related('merchant').prefetch_related('documents').order_by('created_at')
+        submissions = KYCSubmission.objects.filter(
+            status__in=['submitted', 'under_review']
+        ).select_related('merchant').prefetch_related('documents').order_by('created_at', 'id')
 
         data = []
         for sub in submissions:

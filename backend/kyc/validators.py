@@ -22,10 +22,15 @@ def validate_document_file(file):
         raise ValidationError(
             f"Unsupported file type '{ext}'. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
         )
-
     if file.size > MAX_FILE_SIZE:
         raise ValidationError(
             f"File size {file.size / (1024 * 1024):.2f} MB exceeds the 5 MB limit."
+        )
+
+    # MIME Type Validation (Security Hardening)
+    if hasattr(file, 'content_type') and file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise ValidationError(
+            f"Invalid file content type '{file.content_type}'. Allowed: PDF, JPEG, PNG."
         )
 
     return file

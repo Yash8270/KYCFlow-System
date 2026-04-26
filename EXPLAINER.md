@@ -8,7 +8,7 @@ This document addresses the five critical technical areas required for the Playt
 
 **Location:** `backend/kyc/state_machine.py`
 
-The state machine is implemented as a standalone service to ensure business logic is decoupled from API views. We prevent illegal transitions using a mapping of allowed states and enforce integrity using database-level locking and atomic transactions.
+The state machine is implementation-centralized to ensure business logic is decoupled from API views. We prevent illegal transitions using a mapping of allowed states and enforce integrity using database-level locking and atomic transactions.
 
 ```python
 # backend/kyc/state_machine.py
@@ -20,20 +20,25 @@ ALLOWED_TRANSITIONS = {
 }
 
 @transaction.atomic
-def transition(submission, new_status, reason=''):
-    if new_status not in ALLOWED_TRANSITIONS.get(submission.status, []):
-        raise ValidationError(f"Illegal transition from {submission.status} to {new_status}")
+def transition(submission, new_status, actor, reason=''):
+    current_status = submission.status
+    allowed = ALLOWED_TRANSITIONS.get(current_status, [])
+    
+    if new_status not in allowed:
+        raise InvalidTransitionError(f"Illegal transition from {current_status} to {new_status}")
     
     submission.status = new_status
-    if reason or new_status in ('rejected', 'more_info_requested'):
+    if new_status in ('rejected', 'more_info_requested'):
         submission.rejection_reason = reason
-    
-    submission.save()
-    # Log notification automatically...
+    elif new_status == 'approved':
+        submission.rejection_reason = ''
+        
+    submission.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+    # Automated notification logging happens within the same atomic block...
 ```
 
 **Prevention of Illegal Transitions:**
-Illegal transitions are blocked at the **API Layer** (via the `transition` function helper). If an invalid `new_status` is requested, a `ValidationError` is raised, which DRF automatically translates into a `400 Bad Request`. Additionally, we use `select_for_update()` in the views to prevent race conditions during concurrent reviews.
+Illegal transitions are blocked at the **Core Logic Layer**. This design ensures **idempotency** and prevents inconsistent states even under concurrent access. If an invalid `new_status` is requested, an `InvalidTransitionError` is raised. The API layer catches this and returns a `400 Bad Request`. Additionally, we use `transaction.atomic()` to ensure that the status change and the mandatory notification logging either both succeed or both fail.
 
 ---
 
@@ -41,33 +46,45 @@ Illegal transitions are blocked at the **API Layer** (via the `transition` funct
 
 **Location:** `backend/kyc/validators.py`
 
-Validation happens twice: first at the Serializer level and then via a custom validator function.
+Validation is enforced on the backend to avoid trusting client-side checks and to harden the system against malicious uploads.
 
 ```python
 # backend/kyc/validators.py
-def validate_document_file(value):
-    ext = os.path.splitext(value.name)[1].lower()
-    if ext not in ['.pdf', '.jpg', '.jpeg', '.png']:
-        raise ValidationError("Unsupported file extension. Only PDF, JPG, PNG allowed.")
+ALLOWED_CONTENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png']
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+def validate_document_file(file):
+    import os
+    # 1. Extension Check
+    ext = os.path.splitext(file.name)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValidationError(f"Unsupported file type '{ext}'.")
     
-    if value.size > 5 * 1024 * 1024:
-        raise ValidationError("File size exceeds 5MB limit.")
+    # 2. Hard Size Limit
+    if file.size > MAX_FILE_SIZE:
+        raise ValidationError(f"File size exceeds the 5 MB limit.")
+
+    # 3. MIME Type Validation (Security Hardening)
+    if hasattr(file, 'content_type') and file.content_type not in ALLOWED_CONTENT_TYPES:
+        raise ValidationError("Invalid file content type.")
 ```
 
 **Scenario (50MB File):**
-If a user attempts to upload a 50MB file, the `value.size` check triggers immediately during the serializer's `.is_valid()` call. The request is rejected with a `400 Bad Request` and a clear error message: `"File size exceeds 5MB limit."`
+If someone attempts to send a 50MB file, the `file.size` check triggers immediately during serialization. The request is rejected with a `400 Bad Request`. **Validation includes both file extension and MIME type** to prevent spoofed or malicious uploads (e.g., a renamed .exe file).
 
 ---
 
 ### 3. The Queue
 
-**Location:** `backend/kyc/serializers.py` (SLA Logic) & `backend/kyc/views.py` (Ordering)
+**Location:** `backend/kyc/views.py` (Filtering) & `backend/kyc/serializers.py` (SLA Logic)
 
-The reviewer dashboard queue is powered by a standard ORM query that sorts by age (oldest first).
+The reviewer dashboard shows only actionable items, sorted by age.
 
 ```python
-# backend/kyc/views.py (Reviewer Queue)
-queryset = KYCSubmission.objects.exclude(status='draft').order_by('created_at')
+# backend/kyc/views.py (Reviewer Queue Query)
+queryset = KYCSubmission.objects.filter(
+    status__in=['submitted', 'under_review']
+).select_related('merchant').prefetch_related('documents').order_by('created_at', 'id')
 
 # backend/kyc/serializers.py (Dynamic SLA Flag)
 def get_is_at_risk(self, obj):
@@ -77,47 +94,47 @@ def get_is_at_risk(self, obj):
 ```
 
 **Rationale:**
-We order by `created_at` ascending to respect the "oldest first" requirement. The `is_at_risk` flag is computed **dynamically** in the serializer. This is critical because a "stale" flag stored in the database would become incorrect every minute that passes; dynamic calculation ensures the reviewer always sees real-time SLA status.
+We explicitly filter only **actionable states** (`submitted`, `under_review`) to avoid including terminal states like `approved` or `rejected` in the reviewer queue. We order by `created_at` to prioritize the oldest submissions. The `is_at_risk` flag is computed **dynamically** in the serializer to avoid reliance on stale database flags and ensure real-time SLA accuracy.
 
 ---
 
 ### 4. The Auth
 
-**Location:** `backend/kyc/permissions.py` & `backend/kyc/views.py`
+**Location:** `backend/kyc/views.py` & `backend/kyc/permissions.py`
 
-We use a combination of custom DRF permissions and ORM-level filtering.
+Isolation is enforced by overriding the default queryset handled by the API views.
 
 ```python
-# Merchant isolation check in backend/kyc/views.py
+# backend/kyc/views.py (Merchant Submission Isolation)
 def get_queryset(self):
     return KYCSubmission.objects.filter(merchant=self.request.user)
 ```
 
 **Mechanism:**
-Even if Merchant A knows the ID of Merchant B’s submission, they cannot access it because the `get_queryset` method specifically filters the database query to only include records owned by the current `request.user`. For reviewers, a separate `IsReviewer` permission class is used to grant access to the entire queue.
+Even if Merchant A discovers the ID of Merchant B's submission, any attempt to access it will return a `404 Not Found` because the query is strictly scoped to the `request.user`. Reviewer access is enforced via a **dedicated permission class (`IsReviewer`)**, ensuring only authorized staff can access the global queue.
 
 ---
 
 ### 5. The AI Audit
 
-**Scenario: Stale State & Closure Bugs**
+**Scenario: Stale Closure / Race Condition in Restart Flow**
 
-During the implementation of the "Start New Application" feature, an AI-generated pattern suggested calling `fetchData()` (a GET request) immediately after the `POST` request to restart the application.
+During the implementation of the "Start New Application" feature, an AI-generated pattern initially suggested calling `fetchData()` (a GET request) immediately after the `POST` request that restarts the application.
 
 **The Bug:**
-The AI failed to account for potential race conditions or stale state closures in React. If the `POST` returned 201 but the subsequent `GET` fetched the *previous* submission due to a slight database lag or browser caching, the merchant's dashboard would successfully "restart" but would be using the **OLD Submission ID**. This caused subsequent saves to overwrite the wrong record or fail with a 400.
+The AI failed to account for potential race conditions or stale state closures in React. If the `POST` returned successfully but the subsequent `GET` fetched the *previous* submission due to database lag, the dashboard would functionally "restart" but would use the **OLD Submission ID**. This would cause subsequent actions to fail or overwrite the wrong record.
 
 **The Fix:**
 I caught this and replaced the "blind fetch" with a **direct state update** from the `POST` response.
 
 ```javascript
-// BUGGY VERSION (Generated by AI initially)
+// BUGGY VERSION (Initial AI Suggestion)
 await API.post('/submissions/me/');
-await fetchData(); // Relies on a second round-trip and "latest" logic
+await fetchData(); // Relies on a second network call and 'latest' logic
 
-// REPLACED WITH (Secure & Atomic)
+// REPLACED WITH (Secure & Deterministic)
 const res = await API.post('/submissions/me/');
-setSubmission(res.data); // Use the direct, authoritative response
-setFormData(resetData(res.data)); // Explicitly sync form with the new object
+setSubmission(res.data); // Update ID directly from the authoritative source
+setFormData(resetFormData(res.data)); // Sync fields immediately
 ```
-This ensures the frontend and backend are always in perfect sync without depending on the order of asynchronous network requests.
+This avoids reliance on eventual consistency and **eliminates race conditions** caused by sequential API calls.
