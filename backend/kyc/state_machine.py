@@ -34,10 +34,11 @@ TRANSITION_EVENTS = {
 }
 
 
+@transaction.atomic
 def transition(submission, new_status, actor, reason=''):
     """
     Attempt to transition a KYCSubmission to new_status.
-    All logic is wrapped in a transaction.
+    Entire function is atomic to prevent race conditions during status checks.
     """
     current_status = submission.status
 
@@ -48,30 +49,29 @@ def transition(submission, new_status, actor, reason=''):
             f"Allowed transitions: {allowed or 'none (terminal state)'}"
         )
 
-    with transaction.atomic():
-        # Apply the transition
-        submission.status = new_status
-        if new_status in ('rejected', 'more_info_requested'):
-            submission.rejection_reason = reason
-        elif new_status == 'approved':
-            submission.rejection_reason = ''
+    # Apply the transition
+    submission.status = new_status
+    if new_status in ('rejected', 'more_info_requested'):
+        submission.rejection_reason = reason
+    elif new_status == 'approved':
+        submission.rejection_reason = ''
 
-        submission.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+    submission.save(update_fields=['status', 'rejection_reason', 'updated_at'])
 
-        # Log notification
-        event_type = TRANSITION_EVENTS.get((current_status, new_status), 'kyc_status_changed')
-        Notification.objects.create(
-            merchant=submission.merchant,
-            event_type=event_type,
-            payload={
-                'submission_id': submission.pk,
-                'from_status': current_status,
-                'to_status': new_status,
-                'actor_id': actor.pk,
-                'actor_username': actor.username,
-                'reason': reason,
-                'timestamp': timezone.now().isoformat(),
-            }
-        )
+    # Log notification
+    event_type = TRANSITION_EVENTS.get((current_status, new_status), 'kyc_status_changed')
+    Notification.objects.create(
+        merchant=submission.merchant,
+        event_type=event_type,
+        payload={
+            'submission_id': submission.pk,
+            'from_status': current_status,
+            'to_status': new_status,
+            'actor_id': actor.pk,
+            'actor_username': actor.username,
+            'reason': reason,
+            'timestamp': timezone.now().isoformat(),
+        }
+    )
 
     return submission

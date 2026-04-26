@@ -17,6 +17,8 @@ ALLOWED_TRANSITIONS = {
     'submitted': ['under_review'],
     'under_review': ['approved', 'rejected', 'more_info_requested'],
     'more_info_requested': ['submitted'],
+    'approved': [],
+    'rejected': [],
 }
 
 @transaction.atomic
@@ -51,6 +53,7 @@ Validation is enforced on the backend to avoid trusting client-side checks and t
 ```python
 # backend/kyc/validators.py
 ALLOWED_CONTENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png']
+ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png']
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 def validate_document_file(file):
