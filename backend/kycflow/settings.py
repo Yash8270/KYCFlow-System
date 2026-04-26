@@ -12,12 +12,16 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-kycflow-dev-secret-ke
 
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 
-# Robust ALLOWED_HOSTS parsing
-ALLOWED_HOSTS_ENV = os.environ.get('ALLOWED_HOSTS', '*')
-if ALLOWED_HOSTS_ENV == '*':
-    ALLOWED_HOSTS = ['*']
-else:
-    ALLOWED_HOSTS = [h.strip() for h in ALLOWED_HOSTS_ENV.split(',') if h.strip()]
+ALLOWED_HOSTS = [
+    'kycflow-system.onrender.com',
+    'localhost',
+    '127.0.0.1',
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    'https://kycflow-system.onrender.com',
+    'https://yash-limbachiya-kyc-flow-system.vercel.app',
+]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -111,9 +115,16 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
-# CORS
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS — allow your Vercel frontend
+CORS_ALLOWED_ORIGINS = [
+    'https://yash-limbachiya-kyc-flow-system.vercel.app',
+    'http://localhost:3000',
+]
 CORS_ALLOW_CREDENTIALS = True
+
+# Render runs behind a proxy — required for correct host/scheme detection
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
 
 # File upload limits
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
