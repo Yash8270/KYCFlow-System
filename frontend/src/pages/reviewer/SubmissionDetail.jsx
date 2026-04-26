@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import API from '../../api/axios';
 
 const STATUS_COLORS = {
@@ -13,7 +13,6 @@ const STATUS_COLORS = {
 
 export default function SubmissionDetail() {
     const { id } = useParams();
-    const navigate = useNavigate();
     const [submission, setSubmission] = useState(null);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
@@ -21,11 +20,7 @@ export default function SubmissionDetail() {
     const [message, setMessage] = useState('');
     const [selectedAction, setSelectedAction] = useState('');
 
-    useEffect(() => {
-        fetchSubmission();
-    }, [id]);
-
-    const fetchSubmission = async () => {
+    const fetchSubmission = useCallback(async () => {
         try {
             const res = await API.get(`/reviewer/queue/${id}/`);
             setSubmission(res.data);
@@ -34,7 +29,11 @@ export default function SubmissionDetail() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [id]);
+
+    useEffect(() => {
+        fetchSubmission();
+    }, [fetchSubmission]);
 
     const handleAction = async () => {
         if (!selectedAction) return;

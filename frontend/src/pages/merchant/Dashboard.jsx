@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import API from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 
@@ -16,7 +15,6 @@ const STATUS_COLORS = {
 
 export default function MerchantDashboard() {
     const { user, logout } = useAuth();
-    const navigate = useNavigate();
     const [submission, setSubmission] = useState(null);
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -116,7 +114,7 @@ export default function MerchantDashboard() {
     };
 
     const canEdit = submission?.status === 'draft' || submission?.status === 'more_info_requested';
-    const canSubmit = canEdit && submission?.id;
+
 
     if (loading) {
         return (
