@@ -37,14 +37,12 @@ The app will be available at `http://localhost:3000`.
 
 ---
 
-## 🧪 Test Credentials (Seed Data)
+## 🧪 Test Credentials (Live Production Data)
 
 | Role | Username | Password | Context |
 | :--- | :--- | :--- | :--- |
-| **Admin/Superuser** | `admin` | `admin1234` | Full DB access |
-| **Reviewer** | `reviewer1` | `reviewer123` | Queue & metrics access |
-| **Merchant (Draft)** | `merchant_draft` | `merchant123` | Can edit/save KYC |
-| **Merchant (Under Review)** | `merchant_review` | `merchant123` | Restricted access |
+| **Merchant** | `Yash` | `#Yash123` | Submit and track KYC applications |
+| **Reviewer** | `Pinky08` | `#Yash123` | Queue, review, and feedback access |
 
 ---
 
